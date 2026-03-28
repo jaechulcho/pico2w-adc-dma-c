@@ -4,6 +4,8 @@ import serial.tools.list_ports
 import pyqtgraph as pg
 from PyQt6 import QtWidgets, QtCore
 import numpy as np
+import json
+import os
 import struct
 
 class RelativeAxisItem(pg.AxisItem):
@@ -140,6 +142,47 @@ class ADCViewer(QtWidgets.QMainWindow):
             except: w.currentIndexChanged.connect(self.update_ui_state)
 
         self.set_active_channel(1); self.ser = None; self.timer = QtCore.QTimer(); self.timer.timeout.connect(self.update_data); self.full_buffer = b""
+        self.load_settings()
+
+    def load_settings(self):
+        if not os.path.exists("settings.json"): return
+        try:
+            with open("settings.json", "r") as f: s = json.load(f)
+            if "port" in s:
+                idx = self.port_combo.findText(s["port"])
+                if idx >= 0: self.port_combo.setCurrentIndex(idx)
+            if "ch1_scale" in s: self.ch1_scale.setValue(s["ch1_scale"])
+            if "ch1_offset" in s: self.ch1_offset.setValue(s["ch1_offset"])
+            if "ch2_scale" in s: self.ch2_scale.setValue(s["ch2_scale"])
+            if "ch2_offset" in s: self.ch2_offset.setValue(s["ch2_offset"])
+            if "trig_src" in s: self.trig_src.setCurrentText(s["trig_src"])
+            if "trig_level" in s: self.trig_level.setValue(s["trig_level"])
+            if "trig_edge" in s: self.trig_edge.setCurrentText(s["trig_edge"])
+            if "h_shift" in s: self.h_shift.setValue(s["h_shift"])
+            if "dac_type" in s: self.dac_type.setCurrentText(s["dac_type"])
+            if "dac_freq" in s: self.dac_freq.setValue(s["dac_freq"])
+            if "dac_amp" in s: self.dac_amp.setValue(s["dac_amp"])
+            if "srate_combo" in s: self.srate_combo.setCurrentText(s["srate_combo"])
+        except Exception as e: print(f"Error loading settings: {e}")
+
+    def save_settings(self):
+        s = {
+            "port": self.port_combo.currentText(),
+            "ch1_scale": self.ch1_scale.value(), "ch1_offset": self.ch1_offset.value(),
+            "ch2_scale": self.ch2_scale.value(), "ch2_offset": self.ch2_offset.value(),
+            "trig_src": self.trig_src.currentText(), "trig_level": self.trig_level.value(), "trig_edge": self.trig_edge.currentText(),
+            "h_shift": self.h_shift.value(),
+            "dac_type": self.dac_type.currentText(), "dac_freq": self.dac_freq.value(), "dac_amp": self.dac_amp.value(),
+            "srate_combo": self.srate_combo.currentText()
+        }
+        try:
+            with open("settings.json", "w") as f: json.dump(s, f)
+        except Exception as e: print(f"Error saving settings: {e}")
+
+    def closeEvent(self, event):
+        self.save_settings()
+        if self.ser and self.ser.is_open: self.ser.close()
+        super().closeEvent(event)
 
     def set_active_channel(self, ch):
         self.active_ch = ch; color = self.color_ch1 if ch == 1 else self.color_ch2
