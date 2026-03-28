@@ -6,6 +6,7 @@
 #include "hardware/dma.h"
 #include "hardware/pwm.h"
 #include "hardware/clocks.h" // Needed for clk_sys freq
+#include "pico/cyw43_arch.h"
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -77,6 +78,10 @@ void init_dac() {
 
 int main() {
     stdio_init_all();
+    if (cyw43_arch_init()) {
+        printf("WiFi init failed\n");
+        return -1;
+    }
     while (!stdio_usb_connected()) { sleep_ms(10); }
 
     init_dac();
@@ -102,6 +107,15 @@ int main() {
     uint32_t frame_count = 0;
 
     while (true) {
+        static uint32_t last_led_toggle = 0;
+        uint32_t now = to_ms_since_boot(get_absolute_time());
+        if (now - last_led_toggle >= 1000) {
+            static bool led_state = false;
+            led_state = !led_state;
+            cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, led_state);
+            last_led_toggle = now;
+        }
+
         int cmd = getchar_timeout_us(0);
         if (cmd == 'S') {
             uint32_t new_div = 0;

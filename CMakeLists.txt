@@ -33,6 +33,7 @@ add_executable(pico2w_adc_dma
 # Pull in common dependencies
 target_link_libraries(pico2w_adc_dma 
     pico_stdlib 
+    pico_cyw43_arch_none
     hardware_adc 
     hardware_dma
     hardware_pwm
