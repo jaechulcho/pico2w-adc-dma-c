@@ -35,6 +35,7 @@ target_link_libraries(pico2w_adc_dma
     pico_stdlib 
     hardware_adc 
     hardware_dma
+    hardware_pwm
     pico_stdio_usb
 )
 
