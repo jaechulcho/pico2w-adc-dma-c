@@ -63,6 +63,17 @@ class DraggableCurve(pg.PlotCurveItem):
                 self.last_mouse_y = current_y
             ev.accept()
 
+class ChannelFocusFilter(QtCore.QObject):
+    def __init__(self, ch_num, main_window, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.ch_num = ch_num
+        self.main_window = main_window
+
+    def eventFilter(self, obj, event):
+        if event.type() in (QtCore.QEvent.Type.MouseButtonPress, QtCore.QEvent.Type.FocusIn):
+            self.main_window.set_active_channel(self.ch_num)
+        return super().eventFilter(obj, event)
+
 class ADCViewer(QtWidgets.QMainWindow):
     def __init__(self):
         super().__init__()
@@ -91,15 +102,25 @@ class ADCViewer(QtWidgets.QMainWindow):
         plot_layout.addWidget(self.plot_widget); main_layout.addWidget(plot_container, stretch=4)
 
         scroll = QtWidgets.QScrollArea(); scroll_widget = QtWidgets.QWidget(); scroll_layout = QtWidgets.QVBoxLayout(scroll_widget)
+        
+        # Reduce font size for all controls to ~90%
+        base_font = scroll_widget.font()
+        size = base_font.pointSize()
+        if size > 0: base_font.setPointSize(max(6, int(size * 0.9)))
+        else: base_font.setPixelSize(max(10, int(base_font.pixelSize() * 0.9)))
+        scroll_widget.setFont(base_font)
+        
         controls_group = QtWidgets.QGroupBox("Controls"); controls_layout = QtWidgets.QVBoxLayout(controls_group)
         self.port_combo = QtWidgets.QComboBox(); self.refresh_ports(); controls_layout.addWidget(QtWidgets.QLabel("Serial Port:")); controls_layout.addWidget(self.port_combo)
         self.connect_btn = QtWidgets.QPushButton("Connect"); self.connect_btn.clicked.connect(self.toggle_connection); controls_layout.addWidget(self.connect_btn)
         
         controls_layout.addSpacing(10)
         self.ch1_group = QtWidgets.QGroupBox("Channel 1 (Yellow)"); ch1_layout = QtWidgets.QVBoxLayout(self.ch1_group)
+        self.ch1_enabled = QtWidgets.QCheckBox("Enable Channel 1"); self.ch1_enabled.setChecked(True); ch1_layout.addWidget(self.ch1_enabled)
         ch1_layout.addWidget(QtWidgets.QLabel("Scale (V/div equiv):")); self.ch1_scale = QtWidgets.QDoubleSpinBox(); self.ch1_scale.setRange(0.01, 10.0); self.ch1_scale.setValue(1.0); ch1_layout.addWidget(self.ch1_scale)
         ch1_layout.addWidget(QtWidgets.QLabel("Offset (V):")); self.ch1_offset = QtWidgets.QDoubleSpinBox(); self.ch1_offset.setRange(-10.0, 10.0); self.ch1_offset.setValue(0.0); self.ch1_offset.setDecimals(3); ch1_layout.addWidget(self.ch1_offset)
         controls_layout.addWidget(self.ch1_group); self.ch2_group = QtWidgets.QGroupBox("Channel 2 (Pink)"); ch2_layout = QtWidgets.QVBoxLayout(self.ch2_group)
+        self.ch2_enabled = QtWidgets.QCheckBox("Enable Channel 2"); self.ch2_enabled.setChecked(True); ch2_layout.addWidget(self.ch2_enabled)
         ch2_layout.addWidget(QtWidgets.QLabel("Scale (V/div equiv):")); self.ch2_scale = QtWidgets.QDoubleSpinBox(); self.ch2_scale.setRange(0.01, 10.0); self.ch2_scale.setValue(1.0); ch2_layout.addWidget(self.ch2_scale)
         ch2_layout.addWidget(QtWidgets.QLabel("Offset (V):")); self.ch2_offset = QtWidgets.QDoubleSpinBox(); self.ch2_offset.setRange(-10.0, 10.0); self.ch2_offset.setValue(0.0); self.ch2_offset.setDecimals(3); ch2_layout.addWidget(self.ch2_offset)
         controls_layout.addWidget(self.ch2_group)
@@ -137,9 +158,15 @@ class ADCViewer(QtWidgets.QMainWindow):
         self.curve2 = DraggableCurve(2, self.ch2_offset, self, pen=pg.mkPen(self.color_ch2, width=2), name="CH2")
         self.plot_widget.addItem(self.curve1); self.plot_widget.addItem(self.curve2)
 
-        for w in [self.trig_src, self.trig_level, self.trig_edge, self.ch1_scale, self.ch2_scale, self.ch1_offset, self.ch2_offset, self.h_shift]:
-            try: w.valueChanged.connect(self.update_ui_state)
-            except: w.currentIndexChanged.connect(self.update_ui_state)
+        for w in [self.trig_src, self.trig_level, self.trig_edge, self.ch1_scale, self.ch2_scale, self.ch1_offset, self.ch2_offset, self.h_shift, self.ch1_enabled, self.ch2_enabled]:
+            if hasattr(w, 'valueChanged'): w.valueChanged.connect(self.update_ui_state)
+            elif hasattr(w, 'currentIndexChanged'): w.currentIndexChanged.connect(self.update_ui_state)
+            elif hasattr(w, 'toggled'): w.toggled.connect(self.update_ui_state)
+
+        self.ch1_filter = ChannelFocusFilter(1, self)
+        for w in [self.ch1_group, self.ch1_scale, self.ch1_offset, self.ch1_enabled]: w.installEventFilter(self.ch1_filter)
+        self.ch2_filter = ChannelFocusFilter(2, self)
+        for w in [self.ch2_group, self.ch2_scale, self.ch2_offset, self.ch2_enabled]: w.installEventFilter(self.ch2_filter)
 
         self.set_active_channel(1); self.ser = None; self.timer = QtCore.QTimer(); self.timer.timeout.connect(self.update_data); self.full_buffer = b""
         self.load_settings()
@@ -151,6 +178,8 @@ class ADCViewer(QtWidgets.QMainWindow):
             if "port" in s:
                 idx = self.port_combo.findText(s["port"])
                 if idx >= 0: self.port_combo.setCurrentIndex(idx)
+            if "ch1_enabled" in s: self.ch1_enabled.setChecked(s["ch1_enabled"])
+            if "ch2_enabled" in s: self.ch2_enabled.setChecked(s["ch2_enabled"])
             if "ch1_scale" in s: self.ch1_scale.setValue(s["ch1_scale"])
             if "ch1_offset" in s: self.ch1_offset.setValue(s["ch1_offset"])
             if "ch2_scale" in s: self.ch2_scale.setValue(s["ch2_scale"])
@@ -168,6 +197,7 @@ class ADCViewer(QtWidgets.QMainWindow):
     def save_settings(self):
         s = {
             "port": self.port_combo.currentText(),
+            "ch1_enabled": self.ch1_enabled.isChecked(), "ch2_enabled": self.ch2_enabled.isChecked(),
             "ch1_scale": self.ch1_scale.value(), "ch1_offset": self.ch1_offset.value(),
             "ch2_scale": self.ch2_scale.value(), "ch2_offset": self.ch2_offset.value(),
             "trig_src": self.trig_src.currentText(), "trig_level": self.trig_level.value(), "trig_edge": self.trig_edge.currentText(),
@@ -320,11 +350,16 @@ class ADCViewer(QtWidgets.QMainWindow):
                 
                 # The time matches the indices relative to center_idx so the geometry is preserved
                 time_array = (np.arange(valid_start, valid_end) - center_idx) * t_step
-                ch1_p = (ch1_f / self.ch1_scale.value()) + self.ch1_offset.value()
-                ch2_p = (ch2_f / self.ch2_scale.value()) + self.ch2_offset.value()
                 
-                self.curve1.setData(time_array, ch1_p)
-                self.curve2.setData(time_array, ch2_p)
+                if self.ch1_enabled.isChecked():
+                    ch1_p = (ch1_f / self.ch1_scale.value()) + self.ch1_offset.value()
+                    self.curve1.setData(time_array, ch1_p)
+                else: self.curve1.setData([], [])
+                
+                if self.ch2_enabled.isChecked():
+                    ch2_p = (ch2_f / self.ch2_scale.value()) + self.ch2_offset.value()
+                    self.curve2.setData(time_array, ch2_p)
+                else: self.curve2.setData([], [])
             else:
                 self.curve1.setData([], []); self.curve2.setData([], [])
                 
