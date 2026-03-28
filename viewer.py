@@ -7,19 +7,28 @@ import numpy as np
 import struct
 
 class RelativeAxisItem(pg.AxisItem):
-    """Custom AxisItem that shows labels relative to an active offset."""
+    """Custom AxisItem that shows labels relative to an active offset and scale."""
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.offset = 0.0
+        self.v_scale = 1.0
 
-    def setOffset(self, offset):
-        if self.offset != offset:
+    def setOffsetScale(self, offset, v_scale):
+        if self.offset != offset or self.v_scale != v_scale:
             self.offset = offset
+            self.v_scale = v_scale
             self.picture = None 
             self.update()
 
+    def tickValues(self, minVal, maxVal, size):
+        # Force strict 1.0 physical division spacing for oscilloscope grid
+        start = np.ceil(minVal); end = np.floor(maxVal)
+        major_ticks = np.arange(start, end + 1.0, 1.0)
+        minor_ticks = np.arange(np.floor(minVal), np.ceil(maxVal), 0.2)
+        return [(1.0, major_ticks), (0.2, minor_ticks)]
+
     def tickStrings(self, values, scale, spacing):
-        return [f"{v - self.offset:.1f}" for v in values]
+        return [f"{(v - self.offset) * self.v_scale:.2f}" for v in values]
 
 class DraggableCurve(pg.PlotCurveItem):
     def __init__(self, ch_num, spinbox, main_window, *args, **kwargs):
@@ -74,6 +83,7 @@ class ADCViewer(QtWidgets.QMainWindow):
         self.y_axis = RelativeAxisItem(orientation='left')
         self.plot_widget = pg.PlotWidget(axisItems={'left': self.y_axis})
         self.plot_widget.setBackground('k'); self.plot_widget.showGrid(x=True, y=True, alpha=0.3)
+        self.plot_widget.getAxis('left').setTickSpacing(1.0, 0.2)
         self.plot_widget.setLabel('left', 'Voltage', units='V'); self.plot_widget.setLabel('bottom', 'Time', units='s')
         self.plot_widget.setYRange(-5.0, 5.0); self.plot_widget.setMouseEnabled(x=False, y=False); self.plot_widget.hideButtons()
         plot_layout.addWidget(self.plot_widget); main_layout.addWidget(plot_container, stretch=4)
@@ -152,8 +162,10 @@ class ADCViewer(QtWidgets.QMainWindow):
             self.trig_line.setPen(pg.mkPen(color, width=1, style=QtCore.Qt.PenStyle.DashLine, alpha=150))
             self.trig_line.label.setHtml(f"<span style='color: rgb({color_q.red()},{color_q.green()},{color_q.blue()}); font-size: 14pt; font-weight: bold;'>◀ Trigger</span>")
             scale = self.ch1_scale.value() if src == "CH1" else self.ch2_scale.value(); offset = self.ch1_offset.value() if src == "CH1" else self.ch2_offset.value()
-            self.trig_line.setValue((self.trig_level.value() * scale) + offset)
-        active_offset = self.ch1_offset.value() if self.active_ch == 1 else self.ch2_offset.value(); self.y_axis.setOffset(active_offset)
+            self.trig_line.setValue((self.trig_level.value() / scale) + offset)
+        active_offset = self.ch1_offset.value() if self.active_ch == 1 else self.ch2_offset.value()
+        active_scale = self.ch1_scale.value() if self.active_ch == 1 else self.ch2_scale.value()
+        self.y_axis.setOffsetScale(active_offset, active_scale)
         if self.dac_type.currentText() == "PWM Duty": self.dac_amp_label.setText("Duty Cycle (%):")
         else: self.dac_amp_label.setText("Amplitude (%):")
 
@@ -265,9 +277,8 @@ class ADCViewer(QtWidgets.QMainWindow):
                 
                 # The time matches the indices relative to center_idx so the geometry is preserved
                 time_array = (np.arange(valid_start, valid_end) - center_idx) * t_step
-                
-                ch1_p = (ch1_f * self.ch1_scale.value()) + self.ch1_offset.value()
-                ch2_p = (ch2_f * self.ch2_scale.value()) + self.ch2_offset.value()
+                ch1_p = (ch1_f / self.ch1_scale.value()) + self.ch1_offset.value()
+                ch2_p = (ch2_f / self.ch2_scale.value()) + self.ch2_offset.value()
                 
                 self.curve1.setData(time_array, ch1_p)
                 self.curve2.setData(time_array, ch2_p)
